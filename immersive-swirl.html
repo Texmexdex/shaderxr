@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Immersive · Swirl Dome (360°) — XR</title>
+  <link rel="stylesheet" href="./lib/common.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Swirl Dome · 360° immersive</h1>
+    <div class="small">The 2D swirl pattern remapped onto a full dome around you. Project mode toggles between equirectangular (flat-ish map) and stereographic (fisheye).</div>
+
+    <label>projection</label>
+    <select id="proj">
+      <option value="1">stereographic (feels 3D)</option>
+      <option value="0">equirectangular (flat map)</option>
+    </select>
+
+    <label>speed <span id="spdVal"></span></label>
+    <input id="spd" type="range" min="0" max="3" step="0.01" value="1">
+
+    <label>zoom <span id="zoomVal"></span></label>
+    <input id="zoom" type="range" min="0.3" max="3" step="0.01" value="1">
+
+    <div class="hint">
+      <b>Desktop:</b> drag to look around.<br>
+      <b>Quest 3:</b> Enter AR — the pattern surrounds you. Note: this is a 2D shader projected onto the sphere, so it doesn't have true depth — both eyes see the same pattern.
+    </div>
+  </div>
+  <nav id="scene-switch"></nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { mountImmersive } from './lib/immersive-viewer.js';
+    import * as THREE from 'three';
+
+    // 2D Shader Park swirl ported to immersive. The original took `p = enable2D()`
+    // which gave it a screen-space UV in [-1, 1]. Here we synthesize that UV
+    // from the head-space ray direction via either equirectangular (spherical
+    // lat-long) or stereographic (fisheye dome) projection.
+    //
+    // NOTE on stereo: because we're projecting a 2D pattern onto a sphere,
+    // both eyes see the same coordinate. The result is monoscopic. For a
+    // pattern that was born 2D, this is still the correct and best-looking
+    // option — a "painted sky" rather than a volumetric scene.
+    const frag = `
+      uniform int uProj;      // 0 = equirect, 1 = stereographic
+      uniform float uSpeed;
+      uniform float uZoom;
+
+      const float PI = 3.14159265358979;
+
+      vec2 dirToUv(vec3 rd) {
+        if (uProj == 0) {
+          // Equirectangular: longitude/latitude mapped to a 2:1 rectangle,
+          // squeezed to a square for the shader's math to feel right.
+          float lon = atan(rd.x, -rd.z);           // -pi..pi
+          float lat = asin(clamp(rd.y, -1.0, 1.0));// -pi/2..pi/2
+          return vec2(lon / PI, lat / (PI * 0.5)); // -1..1
+        } else {
+          // Stereographic projection from the south pole (rd.y = -1)
+          // Maps the upper hemisphere to a disk centered at origin.
+          // Good feel of "looking up at a fisheye dome".
+          float denom = 1.0 - rd.y;
+          if (denom < 0.0001) return vec2(0.0);
+          return vec2(rd.x, -rd.z) / denom;
+        }
+      }
+
+      void main() {
+        vec3 rd = normalize(vRayDir);
+        vec2 uv = dirToUv(rd) / uZoom;
+
+        // The original Shader Park swirl:
+        vec3 p = vec3(uv, 0.0);
+        vec3 c = vec3(0.0);
+        float l = 1.0;
+        float z = iTime * uSpeed;
+        for (int i = 0; i < 3; i++) {
+          vec3 ww = vec3(uv, 0.0);
+          z += 0.03;
+          l = length(p);
+          ww += p / l * (sin(z) + 1.0) * abs(sin(l * 9.0 - z * 2.0));
+          float d = length(abs(fract(ww.xy - 0.5) - 0.5));
+          c[i] = 0.01 / max(d, 1e-4);
+        }
+        vec3 col = c / max(l, 1e-4);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    const projU   = { value: 1 };
+    const speedU  = { value: 1.0 };
+    const zoomU   = { value: 1.0 };
+
+    const { uniforms } = mountImmersive(frag, {
+      uniforms: { uProj: projU, uSpeed: speedU, uZoom: zoomU },
+      radius: 50
+    });
+
+    // UI bindings
+    const projEl = document.getElementById('proj');
+    projEl.addEventListener('change', () => { uniforms.uProj.value = parseInt(projEl.value, 10); });
+
+    const spdEl = document.getElementById('spd');
+    const spdV = document.getElementById('spdVal');
+    const spdUpd = () => { spdV.textContent = spdEl.value; uniforms.uSpeed.value = parseFloat(spdEl.value); };
+    spdEl.addEventListener('input', spdUpd); spdUpd();
+
+    const zoomEl = document.getElementById('zoom');
+    const zoomV = document.getElementById('zoomVal');
+    const zoomUpd = () => { zoomV.textContent = zoomEl.value; uniforms.uZoom.value = parseFloat(zoomEl.value); };
+    zoomEl.addEventListener('input', zoomUpd); zoomUpd();
+  </script>
+</body>
+</html>

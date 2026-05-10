@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Immersive · Happy Accident (360°) — XR</title>
+  <link rel="stylesheet" href="./lib/common.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Happy Accident · 360° immersive</h1>
+    <div class="small">The "clearly a bug" raymarched fractal, but now the camera ray comes from your head — turn to look around, lean for parallax.</div>
+    <div class="hint">
+      <b>Desktop:</b> drag to look around.<br>
+      <b>Quest 3:</b> Enter AR — the fractal surrounds you in full 360° with proper stereo.
+    </div>
+  </div>
+  <nav id="scene-switch"></nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { mountImmersive } from './lib/immersive-viewer.js';
+
+    // Adapted from the "Clearly a bug" / Happy Accident shader (CC0).
+    // Original Shadertoy computed the ray direction from fragCoord - 0.5*iResolution.
+    // Here the ray direction comes from the WebXR head pose (vRayDir is already
+    // normalized, in world space). This makes it render correctly in 360° with
+    // per-eye stereo parallax because each eye receives its own vRayDir.
+    const frag = `
+      void main() {
+        // Per-eye ray
+        vec3 rd = normalize(vRayDir);
+        float i, d, z = fract(dot(vWorldPos.xy, sin(vWorldPos.xy))) - .5;
+        vec4 o = vec4(0.0), p;
+
+        for (; ++i < 77.; z += .6 * d) {
+          // Ray march along rd from the origin in the procedural world
+          p = vec4(z * rd, .1 * iTime);
+          p.z += iTime;
+          vec4 O = p;
+          p.xy *= mat2(cos(2. + O.z + vec4(0, 11, 33, 0)));
+          p.xy *= mat2(cos(O + vec4(0, 11, 33, 0)));
+
+          vec4 Ocol = (1. + sin(.5 * O.z + length(p - O) + vec4(0, 4, 3, 6)))
+                   / (.5 + 2. * dot(O.xy, O.xy));
+          p = abs(fract(p) - .5);
+          d = abs(min(length(p.xy) - .125, min(p.x, p.y) + 1e-3)) + 1e-3;
+          o += Ocol.w / d * Ocol;
+        }
+
+        vec4 col = tanh(o / 2e4);
+        gl_FragColor = vec4(col.rgb, 1.0);
+      }
+    `;
+
+    mountImmersive(frag, { radius: 50, frameScale: 0.9 });
+  </script>
+</body>
+</html>
