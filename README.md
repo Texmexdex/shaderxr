@@ -1,3 +1,5 @@
+https://texmexdex.github.io/shaderxr/
+
 # Shader Park → Quest 3 AR
 
 A single-file WebXR viewer for a Shader Park sculpt. Drop your Shader Park code
