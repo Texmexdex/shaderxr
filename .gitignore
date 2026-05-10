@@ -1,0 +1,5 @@
+_*.ps1
+*.log
+.DS_Store
+Thumbs.db
+node_modules/

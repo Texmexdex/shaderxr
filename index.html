@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Shader Park XR — Gyroid</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #000; color: #ddd; font-family: ui-sans-serif, system-ui, sans-serif; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 10px; left: 10px; z-index: 10;
+      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
+      padding: 10px 12px; border-radius: 10px; font-size: 12px;
+      max-width: 280px; line-height: 1.35;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    #ui h1 { font-size: 13px; margin: 0 0 6px 0; font-weight: 600; letter-spacing: 0.02em; }
+    #ui label { display: block; margin: 6px 0 2px; font-size: 11px; opacity: 0.75; }
+    #ui input[type=range] { width: 100%; }
+    #ui .row { display: flex; gap: 6px; }
+    #ui .row input { flex: 1; }
+    #ui button { background: #2a6; color: #fff; border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; margin-top: 6px; }
+    #ui button:hover { background: #3c7; }
+    #ui .hint { opacity: 0.55; font-size: 10.5px; margin-top: 6px; }
+    #xrbtn-wrap { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
+    /* Three's ARButton uses inline styles; tweak via attribute selector for consistency */
+    #xrbtn-wrap button { border: 0; padding: 10px 16px; border-radius: 8px; background: #3a6; color: #fff; font: 500 13px ui-sans-serif, system-ui; cursor: pointer; }
+    #xrbtn-wrap button[disabled] { background: #444; color: #888; cursor: not-allowed; }
+    #log { position: fixed; bottom: 70px; left: 10px; font: 11px ui-monospace, monospace; color: #9ab; opacity: 0.75; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="ui">
+    <h1>Shader Park · Gyroid</h1>
+    <label>size <span id="sizeVal"></span></label>
+    <input id="size" type="range" min="1" max="50" step="0.1" value="12">
+
+    <label>gyroid steps <span id="gsVal"></span></label>
+    <input id="gs" type="range" min="0" max="0.1" step="0.001" value="0.06">
+
+    <label>scale <span id="scaleVal"></span></label>
+    <input id="scale" type="range" min="0.05" max="2.0" step="0.01" value="0.3">
+
+    <label>rotate Y <span id="ryVal"></span></label>
+    <input id="ry" type="range" min="-180" max="180" step="1" value="0">
+
+    <label>height (y) <span id="pyVal"></span></label>
+    <input id="py" type="range" min="0" max="2.0" step="0.01" value="1.2">
+
+    <div class="hint">
+      Desktop: drag to orbit, scroll to zoom, sliders above.<br>
+      Quest 3: tap <b>Enter AR</b>. Squeeze one controller to grab. Squeeze both to pinch-scale &amp; rotate. Trigger resets pose.
+    </div>
+  </div>
+
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "shader-park-core": "https://unpkg.com/shader-park-core@0.2.8/dist/shader-park-core.esm.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+    import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+    import { sculptToThreeJSShaderSource } from 'shader-park-core';
+
+    // ─────────────────────────────────────────────────────────────
+    // 1. THE SHADER PARK SOURCE
+    //    Paste any Shader Park code here. It becomes an SDF raymarched
+    //    inside the sculptGroup mesh.
+    // ─────────────────────────────────────────────────────────────
+    const spSource = `
+      let size = input(12, 10, 50.0);
+      let gyroidSteps = input(.06, 0, .1);
+      let s = getSpace();
+      let col = vec3(1, 1, 1.5) + normal * .2;
+      metal(.2);
+      shine(.5);
+      col -= length(s);
+      color(col);
+      s += time * .1;
+      let sdf = min(gyroidSteps, sin(s.x * size) + sin(s.y * size) + sin(s.z * size));
+      setSDF(sdf);
+      intersect();
+      sphere(.5);
+    `;
+
+    // ─────────────────────────────────────────────────────────────
+    // 2. SCENE / RENDERER (WebXR-enabled)
+    // ─────────────────────────────────────────────────────────────
+    const app = document.getElementById('app');
+    const logEl = document.getElementById('log');
+    const log = (m) => { logEl.textContent = m; console.log(m); };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 0); // transparent so AR passthrough shows through
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.xr.enabled = true;
+    app.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 1.4, 1.2);
+
+    // Light so non-PBR fallbacks still see something (shader-park does its own lighting)
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.9));
+
+    // Orbit controls (desktop only — XR ignores them)
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.2, 0);
+    controls.enableDamping = true;
+
+    // ─────────────────────────────────────────────────────────────
+    // 3. BUILD SHADER PARK MATERIAL WITH *OUR* THREE.JS INSTANCE
+    // ─────────────────────────────────────────────────────────────
+    const spCompiled = sculptToThreeJSShaderSource(spSource);
+    if (spCompiled.error) console.error('Shader Park compile error:', spCompiled.error);
+
+    const uniforms = {};
+    for (const u of spCompiled.uniforms) {
+      if (u.type === 'float')      uniforms[u.name] = { value: Number(u.value) };
+      else if (u.type === 'vec2')  uniforms[u.name] = { value: new THREE.Vector2(u.value[0] ?? 0, u.value[1] ?? 0) };
+      else if (u.type === 'vec3')  uniforms[u.name] = { value: new THREE.Vector3(u.value[0] ?? 0, u.value[1] ?? 0, u.value[2] ?? 0) };
+      else if (u.type === 'vec4')  uniforms[u.name] = { value: new THREE.Vector4(u.value[0] ?? 0, u.value[1] ?? 0, u.value[2] ?? 0, u.value[3] ?? 0) };
+    }
+    // Placeholder sampler for the (unused here) msdf uniform declared in the header
+    uniforms.msdf = { value: new THREE.DataTexture(new Uint8Array([0,0,0,0]), 1, 1) };
+    uniforms.msdf.value.needsUpdate = true;
+
+    // The sculpt lives in a sphere of radius _scale in object space
+    const SCULPT_RADIUS = 1.0; // unit-ish; we scale via the group instead
+    uniforms._scale.value = SCULPT_RADIUS;
+    uniforms.opacity.value = 1.0;
+
+    const spMaterial = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: spCompiled.vert,
+      fragmentShader: spCompiled.frag,
+      transparent: true,
+      side: THREE.BackSide  // raymarch from back faces so camera inside bbox still sees it
+    });
+
+    // Bounding mesh sized to match SCULPT_RADIUS. A sphere works nicely for raymarch bounds.
+    const sculptMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(SCULPT_RADIUS, 24, 24),
+      spMaterial
+    );
+
+    // Wrap in a group so we can move/rotate/scale without touching the SDF math
+    const sculptGroup = new THREE.Group();
+    sculptGroup.add(sculptMesh);
+    sculptGroup.position.set(0, 1.2, 0);
+    sculptGroup.scale.setScalar(0.3);
+    scene.add(sculptGroup);
+
+    const initialPose = {
+      position: sculptGroup.position.clone(),
+      quaternion: sculptGroup.quaternion.clone(),
+      scale: sculptGroup.scale.clone()
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // 4. DESKTOP UI → uniforms + transform
+    // ─────────────────────────────────────────────────────────────
+    const bind = (id, valId, fn) => {
+      const el = document.getElementById(id);
+      const v = document.getElementById(valId);
+      const update = () => { v.textContent = el.value; fn(parseFloat(el.value)); };
+      el.addEventListener('input', update);
+      update();
+    };
+    bind('size', 'sizeVal', (v) => { if (uniforms.size) uniforms.size.value = v; });
+    bind('gs',   'gsVal',   (v) => { if (uniforms.gyroidSteps) uniforms.gyroidSteps.value = v; });
+    bind('scale','scaleVal',(v) => { sculptGroup.scale.setScalar(v); initialPose.scale.setScalar(v); });
+    bind('ry',   'ryVal',   (v) => { sculptGroup.rotation.y = v * Math.PI / 180; initialPose.quaternion.copy(sculptGroup.quaternion); });
+    bind('py',   'pyVal',   (v) => { sculptGroup.position.y = v; initialPose.position.y = v; });
+
+    // ─────────────────────────────────────────────────────────────
+    // 5. WEBXR: AR BUTTON + CONTROLLERS + GRAB/PINCH-SCALE
+    // ─────────────────────────────────────────────────────────────
+    const xrBtnWrap = document.getElementById('xrbtn-wrap');
+    const arBtn = ARButton.createButton(renderer, {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['hand-tracking', 'hit-test', 'bounded-floor']
+    });
+    xrBtnWrap.appendChild(arBtn);
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      document.getElementById('ui').style.display = 'none';
+      // When AR starts, plant the sculpt ~1.2m in front of the user at chest height
+      sculptGroup.position.set(0, 1.3, -0.8);
+      sculptGroup.quaternion.identity();
+      sculptGroup.scale.setScalar(0.3);
+      initialPose.position.copy(sculptGroup.position);
+      initialPose.quaternion.copy(sculptGroup.quaternion);
+      initialPose.scale.copy(sculptGroup.scale);
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      document.getElementById('ui').style.display = '';
+    });
+
+    // Controllers
+    const controllers = [0, 1].map((i) => {
+      const c = renderer.xr.getController(i);
+      scene.add(c);
+      return c;
+    });
+    const controllerGrips = [0, 1].map((i) => {
+      const g = renderer.xr.getControllerGrip(i);
+      scene.add(g);
+      return g;
+    });
+    const modelFactory = new XRControllerModelFactory();
+    for (const g of controllerGrips) g.add(modelFactory.createControllerModel(g));
+
+    // Add a small pointer ray so users can see where they're aiming
+    const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+    const rayMat = new THREE.LineBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
+    for (const c of controllers) {
+      const line = new THREE.Line(rayGeo, rayMat);
+      line.name = 'ray';
+      line.scale.z = 2;
+      c.add(line);
+    }
+
+    // Gesture state
+    const squeezing = [false, false];
+    const grabbing = [false, false];
+
+    // Single-hand grab: attach sculptGroup to controller while held
+    const oneHandOffset = [new THREE.Matrix4(), new THREE.Matrix4()];
+
+    // Two-hand pinch: scale & rotate about midpoint
+    const twoHand = {
+      active: false,
+      startDist: 1,
+      startScale: 1,
+      startMidPos: new THREE.Vector3(),
+      startMidQuat: new THREE.Quaternion(),
+      startGroupPos: new THREE.Vector3(),
+      startGroupQuat: new THREE.Quaternion()
+    };
+
+    const tmpPosA = new THREE.Vector3(), tmpPosB = new THREE.Vector3();
+    const tmpQuatA = new THREE.Quaternion(), tmpQuatB = new THREE.Quaternion();
+    const tmpScale = new THREE.Vector3();
+
+    const controllerWorld = (c, outPos, outQuat) => {
+      c.updateWorldMatrix(true, false);
+      c.matrixWorld.decompose(outPos, outQuat, tmpScale);
+    };
+
+    const beginOneHand = (idx) => {
+      // Store controller→sculpt offset so the sculpt feels glued to the hand
+      controllers[idx].updateWorldMatrix(true, false);
+      sculptGroup.updateWorldMatrix(true, false);
+      const invController = new THREE.Matrix4().copy(controllers[idx].matrixWorld).invert();
+      oneHandOffset[idx].multiplyMatrices(invController, sculptGroup.matrixWorld);
+      grabbing[idx] = true;
+    };
+    const endOneHand = (idx) => { grabbing[idx] = false; };
+
+    const beginTwoHand = () => {
+      controllerWorld(controllers[0], tmpPosA, tmpQuatA);
+      controllerWorld(controllers[1], tmpPosB, tmpQuatB);
+      twoHand.startDist = Math.max(0.001, tmpPosA.distanceTo(tmpPosB));
+      twoHand.startScale = sculptGroup.scale.x;
+      twoHand.startMidPos.addVectors(tmpPosA, tmpPosB).multiplyScalar(0.5);
+      twoHand.startMidQuat.copy(tmpQuatA).slerp(tmpQuatB, 0.5);
+      twoHand.startGroupPos.copy(sculptGroup.position);
+      twoHand.startGroupQuat.copy(sculptGroup.quaternion);
+      twoHand.active = true;
+      // Cancel any one-hand grabs so we don't conflict
+      grabbing[0] = false; grabbing[1] = false;
+    };
+    const endTwoHand = () => { twoHand.active = false; };
+
+    const onSqueezeStart = (idx) => () => {
+      squeezing[idx] = true;
+      if (squeezing[0] && squeezing[1]) {
+        beginTwoHand();
+      } else {
+        beginOneHand(idx);
+      }
+    };
+    const onSqueezeEnd = (idx) => () => {
+      squeezing[idx] = false;
+      if (twoHand.active) {
+        endTwoHand();
+        // If the other hand is still squeezing, start a one-hand grab with it
+        const other = 1 - idx;
+        if (squeezing[other]) beginOneHand(other);
+      } else {
+        endOneHand(idx);
+      }
+    };
+
+    // Trigger ("select") = reset pose
+    const onSelect = () => {
+      sculptGroup.position.copy(initialPose.position);
+      sculptGroup.quaternion.copy(initialPose.quaternion);
+      sculptGroup.scale.copy(initialPose.scale);
+    };
+
+    for (let i = 0; i < 2; i++) {
+      controllers[i].addEventListener('squeezestart', onSqueezeStart(i));
+      controllers[i].addEventListener('squeezeend', onSqueezeEnd(i));
+      controllers[i].addEventListener('select', onSelect);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 6. RENDER LOOP
+    // ─────────────────────────────────────────────────────────────
+    const clock = new THREE.Clock();
+    const tmpMatrix = new THREE.Matrix4();
+
+    renderer.setAnimationLoop((_, frame) => {
+      const dt = clock.getDelta();
+      uniforms.time.value += dt;
+
+      if (twoHand.active) {
+        // Scale from distance ratio; rotate about current midpoint difference
+        controllerWorld(controllers[0], tmpPosA, tmpQuatA);
+        controllerWorld(controllers[1], tmpPosB, tmpQuatB);
+
+        const dist = Math.max(0.001, tmpPosA.distanceTo(tmpPosB));
+        const scale = Math.min(5.0, Math.max(0.02, twoHand.startScale * (dist / twoHand.startDist)));
+        sculptGroup.scale.setScalar(scale);
+
+        // Midpoint position becomes the object position (offset by startGroupPos - startMidPos)
+        const midPos = tmpPosA.clone().add(tmpPosB).multiplyScalar(0.5);
+        const midQuat = tmpQuatA.clone().slerp(tmpQuatB, 0.5);
+
+        // Rotation delta between midQuat and startMidQuat applied to startGroupQuat
+        const deltaQuat = midQuat.clone().multiply(twoHand.startMidQuat.clone().invert());
+        sculptGroup.quaternion.copy(deltaQuat).multiply(twoHand.startGroupQuat);
+
+        // Translate so the original offset from the midpoint is preserved
+        const offsetFromMid = twoHand.startGroupPos.clone().sub(twoHand.startMidPos);
+        offsetFromMid.applyQuaternion(deltaQuat);
+        sculptGroup.position.copy(midPos).add(offsetFromMid);
+      } else {
+        // One-hand grab: position sculpt from controller * offset
+        for (let i = 0; i < 2; i++) {
+          if (grabbing[i]) {
+            controllers[i].updateWorldMatrix(true, false);
+            tmpMatrix.multiplyMatrices(controllers[i].matrixWorld, oneHandOffset[i]);
+            tmpMatrix.decompose(sculptGroup.position, sculptGroup.quaternion, sculptGroup.scale);
+            break;
+          }
+        }
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    });
+
+    // Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Helpful info for capability checks
+    if (!('xr' in navigator)) {
+      log('WebXR not available in this browser. Desktop preview only.');
+    } else {
+      navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+        if (!ok) log('immersive-ar not supported here. Open this page on Quest 3 browser for AR.');
+      });
+    }
+  </script>
+</body>
+</html>
