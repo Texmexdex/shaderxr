@@ -29,6 +29,20 @@
     #xrbtn-wrap button { border: 0; padding: 10px 16px; border-radius: 8px; background: #3a6; color: #fff; font: 500 13px ui-sans-serif, system-ui; cursor: pointer; }
     #xrbtn-wrap button[disabled] { background: #444; color: #888; cursor: not-allowed; }
     #log { position: fixed; bottom: 70px; left: 10px; font: 11px ui-monospace, monospace; color: #9ab; opacity: 0.75; }
+    #scene-switch {
+      position: fixed; top: 10px; right: 10px; z-index: 11;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 999px;
+      padding: 4px 4px 4px 10px; font-size: 11.5px;
+    }
+    #scene-switch .label { opacity: 0.7; margin-right: 2px; }
+    #scene-switch a {
+      color: #dfe8f0; text-decoration: none; padding: 5px 10px;
+      border-radius: 999px; background: rgba(255,255,255,0.04);
+    }
+    #scene-switch a.current { background: #2a6; color: #fff; }
+    #scene-switch a:hover:not(.current) { background: rgba(255,255,255,0.1); }
   </style>
 </head>
 <body>
@@ -58,6 +72,11 @@
   </div>
 
   <div id="xrbtn-wrap"></div>
+  <nav id="scene-switch" aria-label="Scene selector">
+    <span class="label">scene</span>
+    <a href="./" class="current">gyroid</a>
+    <a href="./splat.html">splats</a>
+  </nav>
   <div id="log"></div>
 
   <script type="importmap">

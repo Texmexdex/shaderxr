@@ -1,5 +1,7 @@
 _*.ps1
+_*.cjs
 *.log
 .DS_Store
 Thumbs.db
 node_modules/
+.vscode/

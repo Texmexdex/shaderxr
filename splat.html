@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Procedural Splat Field — XR</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #000; color: #ddd; font-family: ui-sans-serif, system-ui, sans-serif; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 10px; left: 10px; z-index: 10;
+      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
+      padding: 12px 14px; border-radius: 10px; font-size: 12px;
+      max-width: 300px; line-height: 1.4;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    #ui h1 { font-size: 13px; margin: 0 0 8px 0; font-weight: 600; letter-spacing: 0.02em; }
+    #ui .small { opacity: 0.6; font-size: 10.5px; margin-bottom: 8px; }
+    #ui label { display: block; margin: 8px 0 2px; font-size: 11px; opacity: 0.75; }
+    #ui input[type=range] { width: 100%; }
+    #ui .row { display: flex; gap: 6px; align-items: center; }
+    #ui select { background: #0d131a; color: #dfe8f0; border: 1px solid #263440; border-radius: 4px; padding: 3px 4px; font-size: 11px; width: 100%; }
+    #ui .hint { opacity: 0.55; font-size: 10.5px; margin-top: 10px; line-height: 1.45; }
+    #xrbtn-wrap { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
+    #xrbtn-wrap button { border: 0; padding: 10px 16px; border-radius: 8px; background: #3a6; color: #fff; font: 500 13px ui-sans-serif, system-ui; cursor: pointer; }
+    #xrbtn-wrap button[disabled] { background: #444; color: #888; cursor: not-allowed; }
+    #fps { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 10; font: 500 12px ui-monospace, monospace; color: #9ab; background: rgba(10,10,14,0.6); padding: 4px 10px; border-radius: 999px; }
+    #log { position: fixed; bottom: 70px; left: 10px; font: 11px ui-monospace, monospace; color: #f86; max-width: 80%; }
+    #scene-switch {
+      position: fixed; top: 10px; right: 10px; z-index: 11;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 999px;
+      padding: 4px 4px 4px 10px; font-size: 11.5px;
+    }
+    #scene-switch .label { opacity: 0.7; margin-right: 2px; }
+    #scene-switch a {
+      color: #dfe8f0; text-decoration: none; padding: 5px 10px;
+      border-radius: 999px; background: rgba(255,255,255,0.04);
+    }
+    #scene-switch a.current { background: #2a6; color: #fff; }
+    #scene-switch a:hover:not(.current) { background: rgba(255,255,255,0.1); }
+    a { color: #7cf; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="ui">
+    <h1>Procedural Splat Field</h1>
+    <div class="small">65,536 GPU-simulated 3D gaussian splats · curl-noise flow · controller attractors · <a href="./">← gyroid demo</a></div>
+
+    <label>particles <span id="countVal"></span></label>
+    <input id="count" type="range" min="4096" max="65536" step="1024" value="65536">
+
+    <label>flow field</label>
+    <select id="field">
+      <option value="0">curl noise</option>
+      <option value="1">vortex</option>
+      <option value="2">toroid</option>
+      <option value="3">lorenz</option>
+    </select>
+
+    <label>flow strength <span id="flowVal"></span></label>
+    <input id="flow" type="range" min="0" max="6" step="0.05" value="2.2">
+
+    <label>splat size <span id="sizeVal"></span></label>
+    <input id="size" type="range" min="0.005" max="0.08" step="0.001" value="0.025">
+
+    <label>color mode</label>
+    <select id="colorMode">
+      <option value="0">velocity direction</option>
+      <option value="1">depth gradient</option>
+      <option value="2">spectral (position)</option>
+      <option value="3">monochrome white</option>
+    </select>
+
+    <label>anisotropy <span id="anisoVal"></span></label>
+    <input id="aniso" type="range" min="0" max="6" step="0.05" value="2.5">
+
+    <div class="hint">
+      <b>Desktop:</b> drag to orbit · scroll to zoom · hold mouse button to attract.<br>
+      <b>Quest 3:</b> tap <b>Enter AR</b>. Squeeze a grip to attract particles to that hand. Squeeze both for a vortex. Trigger to reset.
+    </div>
+  </div>
+
+  <div id="fps"></div>
+  <nav id="scene-switch" aria-label="Scene selector">
+    <span class="label">scene</span>
+    <a href="./">gyroid</a>
+    <a href="./splat.html" class="current">splats</a>
+  </nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+    import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+    // ─────────────────────────────────────────────────────────────
+    // Procedural 3D Gaussian Splat Field in AR
+    // ─────────────────────────────────────────────────────────────
+    // Architecture:
+    //   1. Particle state lives in two pairs of float textures (position+life,
+    //      velocity), 256x256 = 65,536 entries. Each "texel" is one splat.
+    //   2. Every frame a fragment shader reads the current state textures,
+    //      advances physics (flow field + attractors + lifetime), and writes
+    //      to the opposite pair — classic ping-pong GPGPU. This is exactly
+    //      what you'd do with a WGSL compute shader, using the fragment
+    //      pipeline because Quest Browser + WebXR + WebGPU aren't reliably
+    //      composable yet (late 2025).
+    //   3. Rendering uses an instanced quad per splat. The vertex shader
+    //      samples the position texture by instance ID to place the quad;
+    //      the fragment shader computes an anisotropic gaussian falloff and
+    //      emits premultiplied-alpha colour. Additive blending makes this
+    //      composite gracefully over passthrough.
+    //
+    // Why this is interesting in the "post-Shadertoy" context:
+    //   - Fragment-shader-only demos (Shadertoy/Shader Park) can't express
+    //     per-frame GPU state evolution. This moves beyond that.
+    //   - Splats are the current frontier for real-time volumetric looking
+    //     content (Gaussian Splatting, Luma, Polycam). Doing them
+    //     procedurally means no dataset dependency.
+    //   - The entire sim is ~40 lines of GLSL; the render is another ~50.
+    //     Swapping the sim GLSL for WGSL is a day's work, not a rewrite.
+
+    const app = document.getElementById('app');
+    const log = (m) => { document.getElementById('log').textContent = m; console.warn(m); };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.xr.enabled = true;
+    app.appendChild(renderer.domElement);
+
+    // Float textures for GPGPU — require EXT_color_buffer_float on WebGL2,
+    // which is universal on Quest 3 / desktop Chrome.
+    const gl = renderer.getContext();
+    const floatExt = gl.getExtension('EXT_color_buffer_float');
+    if (!floatExt) { log('EXT_color_buffer_float unavailable — this browser can\'t run GPU particle sims.'); }
+
+    // WebGPU probe (informational — we don't switch pipelines here, but we
+    // want to know when Quest Browser catches up)
+    if (navigator.gpu) {
+      navigator.gpu.requestAdapter().then((a) => console.log('[info] WebGPU adapter present:', !!a));
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 1.5, 1.8);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.2, 0);
+    controls.enableDamping = true;
+
+    // ─────────────────────────────────────────────────────────────
+    // 1. GPGPU ping-pong for particle state
+    // ─────────────────────────────────────────────────────────────
+    const TEX_SIZE = 256;             // 256*256 = 65,536 particles
+    const N = TEX_SIZE * TEX_SIZE;
+
+    const makeStateTarget = () => new THREE.WebGLRenderTarget(TEX_SIZE, TEX_SIZE, {
+      type: THREE.FloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false
+    });
+
+    // Two pairs: position+life (RGBA = xyz, life0..1) and velocity+age (RGBA = vxvyvz, age seconds)
+    const posRT = [makeStateTarget(), makeStateTarget()];
+    const velRT = [makeStateTarget(), makeStateTarget()];
+    let rtRead = 0, rtWrite = 1;
+
+    // Seed the initial state with a DataTexture on ping target, copy it once.
+    const seedPos = new Float32Array(N * 4);
+    const seedVel = new Float32Array(N * 4);
+    for (let i = 0; i < N; i++) {
+      const r = Math.cbrt(Math.random()) * 0.6;
+      const th = Math.random() * Math.PI * 2;
+      const ph = Math.acos(2 * Math.random() - 1);
+      seedPos[i*4+0] = r * Math.sin(ph) * Math.cos(th);
+      seedPos[i*4+1] = 1.3 + r * Math.sin(ph) * Math.sin(th);
+      seedPos[i*4+2] = -0.6 + r * Math.cos(ph);
+      seedPos[i*4+3] = Math.random(); // life 0..1
+      seedVel[i*4+0] = (Math.random() - 0.5) * 0.02;
+      seedVel[i*4+1] = (Math.random() - 0.5) * 0.02;
+      seedVel[i*4+2] = (Math.random() - 0.5) * 0.02;
+      seedVel[i*4+3] = Math.random() * 5.0; // age seconds
+    }
+    const posSeedTex = new THREE.DataTexture(seedPos, TEX_SIZE, TEX_SIZE, THREE.RGBAFormat, THREE.FloatType);
+    posSeedTex.needsUpdate = true;
+    const velSeedTex = new THREE.DataTexture(seedVel, TEX_SIZE, TEX_SIZE, THREE.RGBAFormat, THREE.FloatType);
+    velSeedTex.needsUpdate = true;
+
+    // Full-screen triangle scene used by every sim pass
+    const simScene = new THREE.Scene();
+    const simCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const simQuadGeo = new THREE.BufferGeometry();
+    simQuadGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1,-1,0, 3,-1,0, -1,3,0]), 3));
+    const simMesh = new THREE.Mesh(simQuadGeo);
+    simScene.add(simMesh);
+
+    // ─────────────────────────────────────────────────────────────
+    // 2. SEED PASS (copy data textures into ping-pong targets once)
+    // ─────────────────────────────────────────────────────────────
+    const seedMatPos = new THREE.ShaderMaterial({
+      uniforms: { src: { value: posSeedTex } },
+      vertexShader: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragmentShader: `
+        precision highp float;
+        uniform sampler2D src;
+        void main(){ gl_FragColor = texelFetch(src, ivec2(gl_FragCoord.xy), 0); }
+      `,
+      glslVersion: THREE.GLSL3
+    });
+    // Note: GLSL3 requires #version 300 es; Three adds the header. We use
+    // the explicit version so texelFetch / layout(location=0) are available
+    // and so the WGSL port of this shader is 1:1.
+
+    const seedMatVel = seedMatPos.clone();
+    seedMatVel.uniforms = { src: { value: velSeedTex } };
+
+    const runPass = (material, target) => {
+      simMesh.material = material;
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(target);
+      renderer.render(simScene, simCamera);
+      renderer.setRenderTarget(prev);
+    };
+    // Seed both ping buffers so whichever one we sample first on frame 0 is valid
+    runPass(seedMatPos, posRT[0]);
+    runPass(seedMatPos, posRT[1]);
+    runPass(seedMatVel, velRT[0]);
+    runPass(seedMatVel, velRT[1]);
+
+    // ─────────────────────────────────────────────────────────────
+    // 3. SIMULATION PASS — the meat of the GPGPU work
+    // ─────────────────────────────────────────────────────────────
+    //
+    // WGSL equivalent (for when Quest Browser ships WebGPU+WebXR):
+    //
+    //   @group(0) @binding(0) var<storage, read> posIn: array<vec4<f32>>;
+    //   @group(0) @binding(1) var<storage, read> velIn: array<vec4<f32>>;
+    //   @group(0) @binding(2) var<storage, read_write> posOut: array<vec4<f32>>;
+    //   @group(0) @binding(3) var<storage, read_write> velOut: array<vec4<f32>>;
+    //   @compute @workgroup_size(64) fn step(@builtin(global_invocation_id) id: vec3u) { ... }
+    //
+    // The body of that compute shader would be nearly identical to the GLSL
+    // below — same noise function, same integration. Sampling storage buffers
+    // by index replaces texelFetch, and we write to buffers instead of
+    // gl_FragColor.
+
+    // Shared sim body — produces `outPos` (vec4) and `outVel` (vec4) locals.
+    // We inline this into two single-output passes (cleanest cross-browser
+    // path; MRT in GLSL3 via Three's multi-attachment RTs is supported but
+    // adds surface area we don't need for a demo).
+    const simHeader = /* glsl */ `
+      precision highp float;
+      precision highp sampler2D;
+
+      uniform sampler2D posTex;
+      uniform sampler2D velTex;
+      uniform float uDt;
+      uniform float uTime;
+      uniform float uFlow;
+      uniform int   uField;
+      uniform vec3  uAttractor0;
+      uniform vec3  uAttractor1;
+      uniform float uAttract0;
+      uniform float uAttract1;
+      uniform vec3  uCenter;
+      uniform float uResetFlag;
+
+      // Simplex-ish noise (Ashima / Gustavson), compact version
+      vec4 permute(vec4 x){ return mod(((x*34.0)+1.0)*x, 289.0); }
+      vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+      float snoise(vec3 v){
+        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i  = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+        i = mod(i, 289.0);
+        vec4 p = permute(permute(permute(
+                 i.z + vec4(0.0, i1.z, i2.z, 1.0))
+               + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+               + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 1.0/7.0;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0)*2.0 + 1.0;
+        vec4 s1 = floor(b1)*2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+      }
+
+      // Curl of a 3D noise field -> divergence-free, visually silky flow
+      vec3 curlNoise(vec3 p){
+        const float e = 0.08;
+        vec3 dx = vec3(e, 0.0, 0.0);
+        vec3 dy = vec3(0.0, e, 0.0);
+        vec3 dz = vec3(0.0, 0.0, e);
+        float p_x0 = snoise(p - dx), p_x1 = snoise(p + dx);
+        float p_y0 = snoise(p - dy), p_y1 = snoise(p + dy);
+        float p_z0 = snoise(p - dz), p_z1 = snoise(p + dz);
+        float x = p_y1 - p_y0 - p_z1 + p_z0;
+        float y = p_z1 - p_z0 - p_x1 + p_x0;
+        float z = p_x1 - p_x0 - p_y1 + p_y0;
+        return normalize(vec3(x, y, z) + 1e-6);
+      }
+
+      vec3 flow(vec3 p){
+        vec3 q = p - uCenter;
+        if (uField == 0) { // curl noise
+          return curlNoise(q * 1.5 + vec3(uTime * 0.12));
+        } else if (uField == 1) { // vortex around Y
+          float r = length(q.xz) + 1e-4;
+          vec3 tangent = vec3(-q.z, 0.0, q.x) / r;
+          return tangent * (1.0 + 0.4 * snoise(q * 2.0 + uTime * 0.3));
+        } else if (uField == 2) { // toroid
+          float R = 0.35;
+          vec2 c = normalize(q.xz + 1e-5) * R;
+          vec3 ring = vec3(c.x, 0.0, c.y);
+          vec3 toRing = q - ring;
+          vec3 tangent = normalize(vec3(-q.z, 0.0, q.x));
+          vec3 radial = normalize(cross(tangent, vec3(0.0,1.0,0.0)));
+          float a = uTime * 0.4;
+          return normalize(cos(a)*tangent + sin(a)*cross(tangent, toRing));
+        } else { // lorenz-ish
+          float sigma = 10.0, rho = 28.0, beta = 8.0/3.0;
+          return 0.04 * vec3(sigma*(q.y-q.x), q.x*(rho-q.z)-q.y, q.x*q.y - beta*q.z);
+        }
+      }
+    `;
+
+    // Body computes new pos/vel and stores them in local vars newPos/newVel
+    const simBody = /* glsl */ `
+      ivec2 uv = ivec2(gl_FragCoord.xy);
+      vec4 pL = texelFetch(posTex, uv, 0);
+      vec4 vA = texelFetch(velTex, uv, 0);
+
+      vec3 pos = pL.xyz;
+      float life = pL.w;
+      vec3 vel = vA.xyz;
+      float age = vA.w;
+
+      // Forces
+      vec3 f = flow(pos) * uFlow;
+
+      if (uAttract0 > 0.0) {
+        vec3 d = uAttractor0 - pos;
+        float r2 = dot(d,d) + 0.02;
+        f += normalize(d) * uAttract0 * 1.5 / r2;
+      }
+      if (uAttract1 > 0.0) {
+        vec3 d = uAttractor1 - pos;
+        float r2 = dot(d,d) + 0.02;
+        f += normalize(d) * uAttract1 * 1.5 / r2;
+      }
+
+      vel = vel * 0.965 + f * uDt;
+      pos = pos + vel * uDt;
+
+      vec3 toCenter = uCenter - pos;
+      float dC = length(toCenter);
+      if (dC > 1.4) { pos += normalize(toCenter) * (dC - 1.4) * 0.08; }
+
+      age += uDt;
+      float maxAge = 8.0 + fract(sin(float(uv.x*73 + uv.y*131)) * 43758.5) * 6.0;
+      if (age > maxAge || uResetFlag > 0.5) {
+        float h = fract(sin(float(uv.x*19 + uv.y*7) + uTime*17.0) * 43758.5);
+        float h2 = fract(sin(float(uv.x*37 + uv.y*29) + uTime*31.0) * 12345.678);
+        float h3 = fract(sin(float(uv.x*59 + uv.y*11) + uTime*53.0) * 54321.012);
+        float rr = pow(h, 0.3333) * 0.9;
+        float th = h2 * 6.2831853;
+        float ph = acos(2.0*h3 - 1.0);
+        pos = uCenter + rr * vec3(sin(ph)*cos(th), sin(ph)*sin(th), cos(ph));
+        vel = vec3(0.0);
+        age = 0.0;
+        life = h;
+      } else {
+        life = clamp(1.0 - age / maxAge, 0.0, 1.0);
+      }
+
+      vec4 newPos = vec4(pos, life);
+      vec4 newVel = vec4(vel, age);
+    `;
+
+    const simFragPos = simHeader + `
+      out vec4 outColor;
+      void main(){
+        ${simBody}
+        outColor = newPos;
+      }
+    `;
+    const simFragVel = simHeader + `
+      out vec4 outColor;
+      void main(){
+        ${simBody}
+        outColor = newVel;
+      }
+    `;
+
+    const simUniforms = {
+      posTex:     { value: null },
+      velTex:     { value: null },
+      uDt:        { value: 1/60 },
+      uTime:      { value: 0 },
+      uFlow:      { value: 2.2 },
+      uField:     { value: 0 },
+      uAttractor0:{ value: new THREE.Vector3() },
+      uAttractor1:{ value: new THREE.Vector3() },
+      uAttract0:  { value: 0 },
+      uAttract1:  { value: 0 },
+      uCenter:    { value: new THREE.Vector3(0, 1.3, -0.3) },
+      uResetFlag: { value: 0 }
+    };
+
+    const simVert = 'void main(){ gl_Position = vec4(position, 1.0); }';
+    const simMatPos = new THREE.ShaderMaterial({
+      uniforms: simUniforms,
+      vertexShader: simVert,
+      fragmentShader: simFragPos,
+      glslVersion: THREE.GLSL3
+    });
+    const simMatVel = new THREE.ShaderMaterial({
+      uniforms: simUniforms,
+      vertexShader: simVert,
+      fragmentShader: simFragVel,
+      glslVersion: THREE.GLSL3
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // 4. RENDER PASS — instanced billboarded anisotropic gaussians
+    // ─────────────────────────────────────────────────────────────
+    //
+    // For each instance:
+    //   - vertex shader reads the splat's world position from the posTex
+    //     (indexed by instanceID) and builds a camera-facing billboard
+    //   - the billboard is stretched along the velocity direction by the
+    //     `aniso` factor, giving motion-streak style splats
+    //   - fragment shader computes the gaussian weight from the quad UV
+    //     and premultiplies by colour + alpha, emitting additively-blended
+    //     premultiplied fragments
+    //
+    // This is the procedural analog of the "real" 3D Gaussian Splatting
+    // pipeline: the real one splits covariance matrices into anisotropic
+    // 2D ellipses, sorts back-to-front by depth, and renders millions of
+    // splats. We're doing the visual half of it — shape + compositing —
+    // without the sorting or covariance, which is enough to preview the
+    // aesthetic and run at 90Hz.
+
+    const quadGeo = new THREE.InstancedBufferGeometry();
+    quadGeo.setIndex([0, 1, 2, 0, 2, 3]);
+    quadGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      -0.5, -0.5, 0,
+       0.5, -0.5, 0,
+       0.5,  0.5, 0,
+      -0.5,  0.5, 0
+    ]), 3));
+    quadGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+      0,0, 1,0, 1,1, 0,1
+    ]), 2));
+
+    // One per instance: the (x,y) index into the state texture
+    const ids = new Float32Array(N * 2);
+    for (let i = 0; i < N; i++) {
+      ids[i*2+0] = (i % TEX_SIZE) / TEX_SIZE;
+      ids[i*2+1] = Math.floor(i / TEX_SIZE) / TEX_SIZE;
+    }
+    quadGeo.setAttribute('iUv', new THREE.InstancedBufferAttribute(ids, 2));
+    quadGeo.instanceCount = N;
+
+    const renderUniforms = {
+      posTex:    { value: null },
+      velTex:    { value: null },
+      uSize:     { value: 0.025 },
+      uAniso:    { value: 2.5 },
+      uColor:    { value: 0 }  // 0 velocity dir, 1 depth, 2 spectral, 3 white
+    };
+
+    const renderMat = new THREE.ShaderMaterial({
+      uniforms: renderUniforms,
+      vertexShader: /* glsl */ `
+        precision highp float;
+        precision highp sampler2D;
+
+        in vec2 iUv;
+        uniform sampler2D posTex;
+        uniform sampler2D velTex;
+        uniform float uSize;
+        uniform float uAniso;
+
+        out vec2 vQuadUv;
+        out vec3 vVel;
+        out vec3 vWorldPos;
+        out float vLife;
+
+        void main(){
+          vec4 pL = texture(posTex, iUv);
+          vec4 vA = texture(velTex, iUv);
+          vec3 worldPos = pL.xyz;
+          float life = pL.w;
+          vec3 vel = vA.xyz;
+
+          // Camera-facing basis
+          vec3 camRight = vec3(viewMatrix[0].x, viewMatrix[1].x, viewMatrix[2].x);
+          vec3 camUp    = vec3(viewMatrix[0].y, viewMatrix[1].y, viewMatrix[2].y);
+
+          // Anisotropic stretch: align the quad's major axis with velocity
+          // projected into camera plane.
+          float vMag = length(vel);
+          vec3 vDir = vMag > 1e-4 ? vel / vMag : camRight;
+          float speed = clamp(vMag * 0.35, 0.0, 1.0);
+
+          // Project vDir onto camera plane
+          vec3 vProj = vDir - dot(vDir, normalize(cross(camRight, camUp))) * normalize(cross(camRight, camUp));
+          vec3 major = length(vProj) > 1e-4 ? normalize(vProj) : camRight;
+          vec3 minor = normalize(cross(major, normalize(cross(camRight, camUp))));
+
+          float aScale = mix(1.0, uAniso, speed);
+          float size = uSize * (0.6 + 0.4 * life);
+
+          vec3 offs = (position.x * major * aScale + position.y * minor / max(aScale, 0.001)) * size;
+          vec3 world = worldPos + offs;
+
+          vQuadUv = uv - 0.5;   // -0.5..0.5
+          vVel = vel;
+          vWorldPos = world;
+          vLife = life;
+
+          gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+
+        in vec2 vQuadUv;
+        in vec3 vVel;
+        in vec3 vWorldPos;
+        in float vLife;
+        uniform int uColor;
+
+        out vec4 outColor;
+
+        vec3 hsv2rgb(vec3 c){
+          vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+          vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+          return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+
+        void main(){
+          // Anisotropic gaussian: quadUv is in local frame already stretched,
+          // so isotropic falloff in this space -> anisotropic in screen space.
+          float r2 = dot(vQuadUv, vQuadUv) * 4.0;
+          float g = exp(-r2 * 3.0);          // gaussian weight
+          if (g < 0.015) discard;
+
+          vec3 col;
+          if (uColor == 0) {
+            vec3 d = normalize(vVel + vec3(1e-4));
+            col = 0.5 + 0.5 * d;
+          } else if (uColor == 1) {
+            float z = clamp((-vWorldPos.z + 1.0) * 0.6, 0.0, 1.0);
+            col = hsv2rgb(vec3(0.55 + 0.4*z, 0.7, 0.9));
+          } else if (uColor == 2) {
+            float h = fract(length(vWorldPos) * 0.8);
+            col = hsv2rgb(vec3(h, 0.65, 0.95));
+          } else {
+            col = vec3(1.0);
+          }
+
+          float alpha = g * (0.15 + 0.85 * vLife);
+          // Premultiplied alpha with additive blend -> gentle glowing
+          // composite that plays nicely with AR passthrough.
+          outColor = vec4(col * alpha, alpha);
+        }
+      `,
+      glslVersion: THREE.GLSL3,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendEquation: THREE.AddEquation
+    });
+
+    const splats = new THREE.Mesh(quadGeo, renderMat);
+    splats.frustumCulled = false;
+    scene.add(splats);
+
+    // ─────────────────────────────────────────────────────────────
+    // 5. UI BINDINGS
+    // ─────────────────────────────────────────────────────────────
+    const bind = (id, valId, fn) => {
+      const el = document.getElementById(id);
+      const v = valId ? document.getElementById(valId) : null;
+      const update = () => {
+        if (v) v.textContent = el.value;
+        fn(el.type === 'range' ? parseFloat(el.value) : el.value);
+      };
+      el.addEventListener('input', update);
+      update();
+    };
+    bind('count', 'countVal', (v) => {
+      quadGeo.instanceCount = Math.min(N, Math.round(v));
+    });
+    bind('flow', 'flowVal', (v) => { simUniforms.uFlow.value = v; });
+    bind('size', 'sizeVal', (v) => { renderUniforms.uSize.value = v; });
+    bind('aniso', 'anisoVal', (v) => { renderUniforms.uAniso.value = v; });
+    bind('field', null, (v) => { simUniforms.uField.value = parseInt(v, 10); });
+    bind('colorMode', null, (v) => { renderUniforms.uColor.value = parseInt(v, 10); });
+
+    // Mouse-drag to attract on desktop (while not in XR)
+    let mouseActive = false;
+    const mousePos = new THREE.Vector3(0, 1.3, 0);
+    const mouseRay = new THREE.Raycaster();
+    const mouse2 = new THREE.Vector2();
+    const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0.3);
+    renderer.domElement.addEventListener('pointerdown', (e) => { mouseActive = true; updateMouse(e); });
+    renderer.domElement.addEventListener('pointerup',   () => { mouseActive = false; });
+    renderer.domElement.addEventListener('pointermove', (e) => { if (mouseActive) updateMouse(e); });
+    function updateMouse(e){
+      mouse2.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+      mouseRay.setFromCamera(mouse2, camera);
+      const hit = new THREE.Vector3();
+      // Project onto a plane through the cloud center facing the camera
+      const planeNormal = camera.getWorldDirection(new THREE.Vector3()).negate();
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, simUniforms.uCenter.value);
+      if (mouseRay.ray.intersectPlane(plane, hit)) { mousePos.copy(hit); }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 6. WEBXR
+    // ─────────────────────────────────────────────────────────────
+    const xrBtnWrap = document.getElementById('xrbtn-wrap');
+    const arBtn = ARButton.createButton(renderer, {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['hand-tracking']
+    });
+    xrBtnWrap.appendChild(arBtn);
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      document.getElementById('ui').style.display = 'none';
+      simUniforms.uCenter.value.set(0, 1.4, -0.8);
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      document.getElementById('ui').style.display = '';
+    });
+
+    const controllers = [0, 1].map((i) => {
+      const c = renderer.xr.getController(i);
+      scene.add(c);
+      return c;
+    });
+    const grips = [0, 1].map((i) => {
+      const g = renderer.xr.getControllerGrip(i);
+      scene.add(g);
+      return g;
+    });
+    const modelFactory = new XRControllerModelFactory();
+    for (const g of grips) g.add(modelFactory.createControllerModel(g));
+
+    const squeezing = [false, false];
+    for (let i = 0; i < 2; i++) {
+      controllers[i].addEventListener('squeezestart', () => squeezing[i] = true);
+      controllers[i].addEventListener('squeezeend',   () => squeezing[i] = false);
+      controllers[i].addEventListener('select', () => {
+        simUniforms.uResetFlag.value = 1;   // reset on trigger
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 7. RENDER LOOP
+    // ─────────────────────────────────────────────────────────────
+    const fpsEl = document.getElementById('fps');
+    let frameCount = 0, fpsT0 = performance.now();
+    const clock = new THREE.Clock();
+    const tmpPos = new THREE.Vector3();
+
+    function stepSim() {
+      // Read from rtRead, write to rtWrite
+      simUniforms.posTex.value = posRT[rtRead].texture;
+      simUniforms.velTex.value = velRT[rtRead].texture;
+
+      // Position pass
+      simMesh.material = simMatPos;
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(posRT[rtWrite]);
+      renderer.render(simScene, simCamera);
+
+      // Velocity pass (reads from the SAME input pair — correct Euler step)
+      simMesh.material = simMatVel;
+      renderer.setRenderTarget(velRT[rtWrite]);
+      renderer.render(simScene, simCamera);
+      renderer.setRenderTarget(prev);
+
+      // Reset only fires for one frame
+      simUniforms.uResetFlag.value = 0;
+      // Swap
+      rtRead = 1 - rtRead;
+      rtWrite = 1 - rtWrite;
+    }
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(0.05, clock.getDelta());
+      simUniforms.uDt.value = dt;
+      simUniforms.uTime.value += dt;
+
+      // Attractors from XR controllers or mouse
+      if (renderer.xr.isPresenting) {
+        for (let i = 0; i < 2; i++) {
+          if (squeezing[i]) {
+            grips[i].getWorldPosition(tmpPos);
+            simUniforms[`uAttractor${i}`].value.copy(tmpPos);
+            simUniforms[`uAttract${i}`].value = 1.2;
+          } else {
+            simUniforms[`uAttract${i}`].value = 0;
+          }
+        }
+      } else {
+        if (mouseActive) {
+          simUniforms.uAttractor0.value.copy(mousePos);
+          simUniforms.uAttract0.value = 1.2;
+        } else {
+          simUniforms.uAttract0.value = 0;
+        }
+        simUniforms.uAttract1.value = 0;
+      }
+
+      stepSim();
+
+      // Bind freshly-updated state for rendering
+      renderUniforms.posTex.value = posRT[rtRead].texture;
+      renderUniforms.velTex.value = velRT[rtRead].texture;
+
+      controls.update();
+      renderer.render(scene, camera);
+
+      // FPS readout (not rendered in XR, which has its own HUD)
+      frameCount++;
+      const now = performance.now();
+      if (now - fpsT0 > 500) {
+        const fps = (frameCount * 1000 / (now - fpsT0)).toFixed(0);
+        fpsEl.textContent = `${fps} fps · ${(quadGeo.instanceCount/1000).toFixed(0)}k splats`;
+        frameCount = 0; fpsT0 = now;
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Feature report
+    if (!('xr' in navigator)) {
+      log('WebXR unavailable. Desktop preview only.');
+    } else {
+      navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+        if (!ok) log('immersive-ar not supported — open on Quest 3 browser for AR.');
+      });
+    }
+  </script>
+</body>
+</html>
