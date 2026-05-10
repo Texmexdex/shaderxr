@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Shadertoy · Happy Accident — XR</title>
+  <link rel="stylesheet" href="./lib/common.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Happy Accident · Shadertoy</h1>
+    <div class="small">"Clearly a bug" — raymarched fractal that emerged from a matrix-math happy accident. Works beautifully as an AR portal.</div>
+    <div class="hint">
+      <b>Desktop:</b> drag to orbit · scroll to zoom.<br>
+      <b>Quest 3:</b> Enter AR · squeeze to grab · both squeeze to scale · trigger to reset.
+    </div>
+  </div>
+  <nav id="scene-switch"></nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { mountToy } from './lib/toy-viewer.js';
+
+    // CC0 — "Clearly a bug" / Happy Accident shader
+    const frag = `
+      void mainImage(out vec4 O, vec2 C) {
+        float i, d, z = fract(dot(C, sin(C))) - .5;
+        vec4 o, p;
+        for (vec2 r = iResolution.xy; ++i < 77.; z += .6*d) {
+          p = vec4(z*normalize(vec3(C - .5*r, r.y)), .1*iTime);
+          p.z += iTime;
+          O = p;
+          p.xy *= mat2(cos(2. + O.z + vec4(0, 11, 33, 0)));
+          p.xy *= mat2(cos(O + vec4(0, 11, 33, 0)));
+          O = (1. + sin(.5*O.z + length(p - O) + vec4(0, 4, 3, 6)))
+            / (.5 + 2.*dot(O.xy, O.xy));
+          p = abs(fract(p) - .5);
+          d = abs(min(length(p.xy) - .125, min(p.x, p.y) + 1e-3)) + 1e-3;
+          o += O.w / d * O;
+        }
+        O = tanh(o / 2e4);
+      }
+    `;
+
+    mountToy(frag, { aspect: 16/9, width: 1.3, resolution: 720 });
+  </script>
+</body>
+</html>

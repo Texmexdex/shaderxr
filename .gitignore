@@ -5,3 +5,6 @@ _*.cjs
 Thumbs.db
 node_modules/
 .vscode/
+# Working notes — not for repo
+rawpark.txt
+rawtoy.txt

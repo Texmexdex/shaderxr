@@ -4,46 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
   <title>Shader Park XR — Gyroid</title>
-  <style>
-    :root { color-scheme: dark; }
-    html, body { margin: 0; height: 100%; background: #000; color: #ddd; font-family: ui-sans-serif, system-ui, sans-serif; overflow: hidden; }
-    #app { position: fixed; inset: 0; }
-    canvas { display: block; }
-    #ui {
-      position: fixed; top: 10px; left: 10px; z-index: 10;
-      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
-      padding: 10px 12px; border-radius: 10px; font-size: 12px;
-      max-width: 280px; line-height: 1.35;
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    #ui h1 { font-size: 13px; margin: 0 0 6px 0; font-weight: 600; letter-spacing: 0.02em; }
-    #ui label { display: block; margin: 6px 0 2px; font-size: 11px; opacity: 0.75; }
-    #ui input[type=range] { width: 100%; }
-    #ui .row { display: flex; gap: 6px; }
-    #ui .row input { flex: 1; }
-    #ui button { background: #2a6; color: #fff; border: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer; margin-top: 6px; }
-    #ui button:hover { background: #3c7; }
-    #ui .hint { opacity: 0.55; font-size: 10.5px; margin-top: 6px; }
-    #xrbtn-wrap { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; }
-    /* Three's ARButton uses inline styles; tweak via attribute selector for consistency */
-    #xrbtn-wrap button { border: 0; padding: 10px 16px; border-radius: 8px; background: #3a6; color: #fff; font: 500 13px ui-sans-serif, system-ui; cursor: pointer; }
-    #xrbtn-wrap button[disabled] { background: #444; color: #888; cursor: not-allowed; }
-    #log { position: fixed; bottom: 70px; left: 10px; font: 11px ui-monospace, monospace; color: #9ab; opacity: 0.75; }
-    #scene-switch {
-      position: fixed; top: 10px; right: 10px; z-index: 11;
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(10,10,14,0.72); backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,0.08); border-radius: 999px;
-      padding: 4px 4px 4px 10px; font-size: 11.5px;
-    }
-    #scene-switch .label { opacity: 0.7; margin-right: 2px; }
-    #scene-switch a {
-      color: #dfe8f0; text-decoration: none; padding: 5px 10px;
-      border-radius: 999px; background: rgba(255,255,255,0.04);
-    }
-    #scene-switch a.current { background: #2a6; color: #fff; }
-    #scene-switch a:hover:not(.current) { background: rgba(255,255,255,0.1); }
-  </style>
+  <link rel="stylesheet" href="./lib/common.css">
 </head>
 <body>
   <div id="app"></div>
@@ -72,12 +33,10 @@
   </div>
 
   <div id="xrbtn-wrap"></div>
-  <nav id="scene-switch" aria-label="Scene selector">
-    <span class="label">scene</span>
-    <a href="./" class="current">gyroid</a>
-    <a href="./splat.html">splats</a>
-  </nav>
+  <nav id="scene-switch" aria-label="Scene selector"></nav>
   <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
 
   <script type="importmap">
   {

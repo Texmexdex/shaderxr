@@ -1,76 +1,123 @@
 https://texmexdex.github.io/shaderxr/
 
-# Shader Park → Quest 3 AR
+# shaderxr
 
-A single-file WebXR viewer for a Shader Park sculpt. Drop your Shader Park code
-into `index.html` (see the `spSource` constant) and open the page. On desktop
-you get an orbit camera with sliders. On a Quest 3 browser, hit **Enter AR** for
-passthrough and grab the sculpt with the controllers.
+A collection of small WebXR experiments that run in the Quest 3 browser over
+AR passthrough. No build step — each page is a static HTML file that pulls
+three.js and shader-park-core from a CDN via an import map.
 
-## How to run
+All demos share a scene-switcher dropdown in the top-right: pick a shader and
+the page swaps. In AR you'll drop back to the browser view between scenes
+(WebXR sessions can't carry across page navigations), so tap **Enter AR**
+again after switching.
 
-### Desktop (local preview)
-1. From this folder, run:
-   ```
-   powershell -ExecutionPolicy Bypass -File .\serve.ps1
-   ```
-2. Open `http://localhost:8000/` in Chrome/Edge.
+## The demos
 
-> You can also just double-click `index.html`, but some browsers block ES module
-> import maps over `file://`. The server path is more reliable.
+| URL                   | Source           | Treatment                          |
+|-----------------------|------------------|------------------------------------|
+| `/`                   | Shader Park SDF  | Raymarched sculpt (gyroid)         |
+| `/park-swirl.html`    | Shader Park 2D   | Flat sculpt on a floating panel    |
+| `/park-torus.html`    | Shader Park SDF  | Noisy animated torus               |
+| `/park-contour.html`  | Shader Park SDF  | Metallic contour-noise torus       |
+| `/toy-palette.html`   | Shadertoy frag   | iq-palette fractal portal          |
+| `/toy-tunnel.html`    | Shadertoy frag   | Raymarched infinite tunnel portal  |
+| `/toy-happy.html`     | Shadertoy frag   | "Happy accident" raymarch portal   |
+| `/splat.html`         | Custom GLSL      | 65k GPU-simulated 3D gaussian splats |
 
-### Quest 3 (AR passthrough)
-WebXR's `immersive-ar` session requires **HTTPS** (except `localhost`). Easiest
-options:
+## Shader Park demos
 
-- **ngrok** (recommended):
-  1. Start the local server as above.
-  2. In another terminal: `ngrok http 8000`
-  3. Copy the `https://…ngrok-free.app` URL and open it in the Quest 3 browser.
-  4. Tap **Enter AR**. Grant camera/passthrough permission if prompted.
+Shader Park is a JavaScript DSL that compiles to GLSL. We use
+`sculptToThreeJSShaderSource` to get the raw GLSL + uniform descriptors, then
+build our own `THREE.ShaderMaterial` with the main Three.js instance (so it
+shares a WebGL context with the WebXR renderer). 3D sculpts render inside a
+`SphereGeometry` bounding mesh; 2D sculpts (those using `enable2D()`) render
+on a `PlaneGeometry`.
 
-- **Meta Quest Developer Hub** "Proxy" feature or any HTTPS tunnel works too.
+Helper: `lib/park-viewer.js` — a single `mountPark(spSource, opts)` call
+creates the scene, XR session, grab gestures, and returns `{ uniforms }` for
+hooking sliders.
 
-- **mkcert / self-signed cert** — more involved; skip unless you already have
-  certificates set up.
+## Shadertoy demos
 
-### Controls in AR
-- **Squeeze one controller** → grab and move/rotate the sculpt with that hand.
-- **Squeeze both controllers** → pinch to scale, plus positional/rotational
-  midpoint control (like grabbing a balloon with two hands).
-- **Trigger (select) on either controller** → reset pose to "in front of me".
+Shadertoy shaders expect a `void mainImage(out vec4, in vec2)` entrypoint and
+standard uniforms (`iTime`, `iResolution`, `iMouse`, `iDate`, `iFrame`,
+`iTimeDelta`). We wrap those into a fragment shader attached to a framed,
+grabbable floating plane in AR — the "portal panel" approach. 2D shaders
+become flat windows; 3D raymarched shaders look like genuine windows into
+another dimension.
 
-### Controls on desktop
-- Drag to orbit, scroll to zoom.
-- Sliders in the top-left tune `size`, `gyroidSteps`, scale, rotation, height.
+Helper: `lib/toy-viewer.js` — `mountToy(mainImageSource, opts)` mounts the
+panel. Aspect ratio, world-meter width, and internal resolution are tunable.
 
-## Swapping in a different Shader Park sculpt
+Not wired (easy to add if you need it): `iChannel0..3`, `iChannelTime`,
+`iChannelResolution`. These are the inputs that Shadertoy pipes in from
+textures/buffers/audio — the demos we've ported don't use them.
 
-Open `index.html`, find the `spSource` template string near the top of the
-module, and replace it. Any `input(...)` calls become live uniforms with the
-variable's name, so if you add `let foo = input(1, 0, 5)` you can read/write
-`uniforms.foo.value` from JS.
+## Procedural gaussian splat field (`/splat.html`)
 
-## How it works (quick)
+The most practically interesting demo in terms of where shader work is
+heading. 65,536 animated splats with state stored in GPU float textures,
+advanced every frame by a ping-pong fragment-shader pass (the WebGL2
+equivalent of a WGSL compute shader). Rendered as instanced anisotropic
+billboarded gaussians with premultiplied-alpha additive blending, which
+composites cleanly against AR passthrough.
 
-- `shader-park-core.sculptToThreeJSShaderSource(src)` compiles your JS sculpt
-  to GLSL + a uniform descriptor list.
-- We build our own `THREE.ShaderMaterial` using those — crucially with the
-  **same Three.js instance** that owns the WebXR renderer, so everything
-  lives in one WebGL context.
-- The raymarch runs inside a `SphereGeometry` bounding mesh (`BackSide` so
-  you can pass through it). A parent `Group` takes all transform changes.
-- `renderer.xr.enabled = true` + `ARButton` + controller squeeze/select
-  events handle the grab/pinch-scale gestures.
+Why this matters:
+- **Fragment-shader-only** tools like Shadertoy and Shader Park can't express
+  per-frame GPU state evolution. Particle sims, fluids, reaction-diffusion,
+  neural fields all need this pattern.
+- **Gaussian Splatting** is the current frontier for real-time
+  photoreal-looking volumetrics. Doing it procedurally sidesteps the
+  dataset-dependency barrier while keeping the visual language.
+- **WGSL-port-ready**: the sim shader is structured so each fragment maps
+  1:1 to a compute-shader invocation. See the comments in `splat.html`.
+
+## Running locally
+
+```
+powershell -ExecutionPolicy Bypass -File .\serve.ps1
+```
+
+Open `http://localhost:8000/` in Chrome/Edge.
+
+### Quest 3 AR
+WebXR's `immersive-ar` session needs HTTPS. Two options:
+
+1. **Use GitHub Pages** (already set up): open the live URL on the Quest.
+2. **ngrok** for local testing: `ngrok http 8000`, then open the
+   `https://…ngrok-free.app` URL on the headset.
+
+## Controls
+
+**Desktop:** drag to orbit, scroll to zoom, sliders in the top-left for any
+tunable uniforms. On `/splat.html`, hold the mouse to attract particles to
+the cursor.
+
+**Quest 3 AR:**
+- Squeeze one controller grip to grab and move/rotate.
+- Squeeze both to pinch-scale and rotate about the midpoint.
+- Pull the trigger to reset the pose.
 
 ## Performance tips
 
-- The Quest 3 renders stereo at ~90Hz with passthrough composited. If the
-  shader stutters, reduce `MAX_ITERATIONS` in the generated shader (Shader
-  Park defaults to 300 — high). You can lower it by editing the fragment
-  source returned from `sculptToThreeJSShaderSource` before handing it to
-  `ShaderMaterial`, e.g. `.frag.replace('MAX_ITERATIONS = 300', 'MAX_ITERATIONS = 80')`.
-- Keep `stepSize` (uniform `stepSize`) in the 0.7–0.95 range; lower = more
-  accurate but slower.
-- Non-uniform scaling distorts the SDF. Stick to uniform scaling (which is
-  what the two-hand pinch gesture does).
+- The Quest 3 renders stereo at ~90Hz with passthrough composited. If
+  Shader Park demos stutter, lower `MAX_ITERATIONS` by editing the fragment
+  string in `lib/park-viewer.js` before it's passed to `ShaderMaterial`
+  (default is 300 — try 80).
+- On `/splat.html`, drop the **particles** slider if framerate suffers.
+- Shadertoy raymarched demos are usually the heaviest. Lower the panel
+  `resolution` option in `lib/toy-viewer.js` (default 512–720) for a fps win.
+
+## Adding a new shader
+
+1. **Shader Park sculpt**: copy `park-torus.html`, swap the `spSource`
+   template string, tweak `geometry` (`'sphere'` or `'plane'`).
+2. **Shadertoy frag**: copy `toy-tunnel.html`, paste your `mainImage`
+   function into the `frag` variable, tune `aspect` / `width` / `resolution`.
+3. Add it to the manifest in `lib/scene-switch.js` so the dropdown shows it.
+
+## Licensing note
+
+Shadertoy ports include attribution in their HTML files. Please keep those
+comments intact when forking.
+</content>

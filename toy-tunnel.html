@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Shadertoy · Infinite Tunnel — XR</title>
+  <link rel="stylesheet" href="./lib/common.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Infinite Tunnel · Shadertoy</h1>
+    <div class="small">Tiny raymarched repeating tunnel. Reads like a window into another dimension floating in your room.</div>
+    <div class="hint">
+      <b>Desktop:</b> drag to orbit · scroll to zoom.<br>
+      <b>Quest 3:</b> Enter AR · squeeze to grab · both squeeze to scale · trigger to reset.
+    </div>
+  </div>
+  <nav id="scene-switch"></nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { mountToy } from './lib/toy-viewer.js';
+
+    const frag = `
+      void mainImage(out vec4 O, vec2 I) {
+        float i, t, v;
+        for (O *= i; i++ < 50.;) {
+          vec3 p = t * normalize(vec3(I + I, 1) - iResolution.xyy);
+          p.xy *= mat2(cos(t*.15 + vec4(0, 11, 33, 0)));
+          p.z -= iTime;
+          p = mod(p, 4.) - 2.;
+          v = mix(abs(length(p) - 0.01), length(p.xz), .5 - .5*cos(t)) + .01;
+          t += v*.3;
+          O += exp(sin(t + vec4(-2, 3, 8, 0))) / v;
+        }
+        O = tanh(O / 2e2);
+      }
+    `;
+
+    mountToy(frag, { aspect: 16/9, width: 1.3, resolution: 720 });
+  </script>
+</body>
+</html>

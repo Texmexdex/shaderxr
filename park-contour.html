@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Shader Park · Metallic Contour — XR</title>
+  <link rel="stylesheet" href="./lib/common.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <h1>Metallic Contour · Shader Park 3D</h1>
+    <div class="small">Reflective torus with vector contour noise displacement — drag <b>scale</b> to warp it.</div>
+
+    <label>scale <span id="scaleVal"></span></label>
+    <input id="scale" type="range" min="0" max="2" step="0.01" value="0.5">
+
+    <div class="hint">
+      <b>Desktop:</b> drag to orbit · scroll to zoom.<br>
+      <b>Quest 3:</b> Enter AR · squeeze to grab · both squeeze to scale · trigger to reset.
+    </div>
+  </div>
+  <nav id="scene-switch"></nav>
+  <div id="xrbtn-wrap"></div>
+  <div id="log"></div>
+
+  <script src="./lib/scene-switch.js" defer></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "shader-park-core": "https://unpkg.com/shader-park-core@0.2.8/dist/shader-park-core.esm.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { mountPark } from './lib/park-viewer.js';
+
+    const spSource = `
+      setStepSize(.5);
+      setMaxIterations(40);
+      let s = getSpace();
+
+      let scale = input(.50, 0, 2);
+      let n = vectorContourNoise(s*scale+time*0.14, .05, 6)*.5+.5;
+      n = pow(n, vec3(2));
+
+      color(n);
+
+      metal(8.4);
+      setMaxReflections(.01);
+      occlusion(-100);
+      displace(0.1, 1);
+      let conto = getRayDirection().x * 10 * sin(time + scale * 1);
+      rotateX(PI / 2 + conto);
+
+      let col = vec3(0, 1, conto);
+      reflectiveColor(0.4, 1, 0.2);
+      torus(0.4, 0.5);
+      expand(n.z * (scale /1.5));
+
+      reset();
+    `;
+
+    const { uniforms } = mountPark(spSource, {
+      geometry: 'sphere',
+      radius: 1.0,
+      initialScale: 0.5
+    });
+
+    // Wire up the scale slider to the `scale` uniform
+    const el = document.getElementById('scale');
+    const v = document.getElementById('scaleVal');
+    const update = () => {
+      v.textContent = el.value;
+      if (uniforms.scale) uniforms.scale.value = parseFloat(el.value);
+    };
+    el.addEventListener('input', update);
+    update();
+  </script>
+</body>
+</html>
